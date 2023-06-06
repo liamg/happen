@@ -22,6 +22,7 @@ var DefaultConfig = Config{
 	ShowDescriptions: true,
 	MaxBadgeSize:     16,
 	ShowHelp:         true,
+	PollInterval:     time.Minute,
 	Sources: []Source{
 		{
 			Name:       "BBC",

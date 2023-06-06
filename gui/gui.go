@@ -33,10 +33,12 @@ type GUI struct {
 	filtered   []feed.Item
 	config     *feed.Config
 	selectedID string
+	lastUpdate time.Time
+	updateMu   sync.Mutex
 }
 
 const (
-	helpText = "q - exit | j/k/up/down - change selection | enter - open link | esc - clear selection"
+	helpText = "q - exit | j/k/up/down - select | enter - open | esc - clear | / - filter | r - refresh"
 )
 
 func Create(conf *feed.Config) (*GUI, error) {
@@ -64,21 +66,31 @@ func (g *GUI) Run(ctx context.Context) {
 
 	g.screen.EnableMouse()
 
-	tickerTime := g.config.PollInterval
-
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
 	go g.Update()
 
-	ticker := time.NewTicker(tickerTime)
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				g.Update()
+				g.updateMu.Lock()
+				if time.Since(g.lastUpdate) < g.config.PollInterval {
+					g.screen.PostEvent(tickEvent{
+						t: time.Now(),
+					})
+					g.updateMu.Unlock()
+					continue
+				}
+				g.updateMu.Unlock()
+				go g.Update()
+				g.screen.PostEvent(tickEvent{
+					t: time.Now(),
+				})
 			case <-ctx.Done():
 				return
 			}
@@ -87,7 +99,10 @@ func (g *GUI) Run(ctx context.Context) {
 
 	for {
 		switch ev := g.screen.PollEvent().(type) {
+		case tickEvent:
+			g.Redraw()
 		case updateEvent:
+			g.applyFilter(g.filter, g.filtering)
 			g.interacting = false
 			g.Redraw()
 		case *tcell.EventResize:
@@ -101,31 +116,40 @@ func (g *GUI) Run(ctx context.Context) {
 			} else {
 				continue
 			}
-			ticker.Reset(tickerTime / 2) // delay update if user is interacting with stuff
+			g.delayUpdate()
 			g.Redraw()
 		case *tcell.EventKey:
 			switch ev.Key() {
 			case tcell.KeyEscape:
-				if !g.interacting {
-					g.filter = ""
-					g.filtering = false
-					g.dataMu.Lock()
-					g.applyFilter()
-					g.dataMu.Unlock()
-				}
+				g.applyFilter("", false)
 				g.interacting = false
 				g.Redraw()
 				continue
 			case tcell.KeyRune:
 				switch ev.Rune() {
+				case 'o':
+					if g.interacting {
+						if g.scroll.selection < len(g.filtered) {
+							g.openLink(g.filtered[g.scroll.selection].Url)
+						}
+					}
 				case '/':
 					g.startFilterInput()
+					g.interacting = false
+				case 'r':
+					go g.Update()
+					g.changeSelection(len(g.filtered), false)
+					g.Redraw()
 				case 'q':
 					return
 				case 'j':
 					g.changeSelection(1, false)
 				case 'k':
 					g.changeSelection(-1, false)
+				case 'g', '0':
+					g.changeSelection(-len(g.filtered), false)
+				case 'G', '$':
+					g.changeSelection(len(g.filtered), false)
 				}
 			case tcell.KeyPgDn:
 				g.changeSelection(g.scroll.visible, false)
@@ -146,12 +170,26 @@ func (g *GUI) Run(ctx context.Context) {
 					}
 				}
 			}
-			ticker.Reset(tickerTime / 2) // delay update if user is interacting with stuff
+			g.delayUpdate()
 			g.interacting = true
 			g.Redraw()
 		}
 	}
 
+}
+
+func (g *GUI) delayUpdate() {
+	g.updateMu.Lock()
+	g.lastUpdate = time.Now()
+	g.updateMu.Unlock()
+}
+
+type tickEvent struct {
+	t time.Time
+}
+
+func (e tickEvent) When() time.Time {
+	return e.t
 }
 
 type updateEvent struct {
@@ -165,51 +203,56 @@ func (e updateEvent) When() time.Time {
 func (g *GUI) startFilterInput() {
 	g.dataMu.Lock()
 	g.filterEditing = true
-	g.filtering = true
-	g.filter = ""
 	g.dataMu.Unlock()
-	update := func(clear bool) {
+	defer func() {
 		g.dataMu.Lock()
-		if clear {
-			g.filterEditing = false
-		}
-		g.applyFilter()
+		g.filterEditing = false
 		g.dataMu.Unlock()
-		g.Redraw()
-	}
-	update(false)
-	defer update(true)
+	}()
+
+	var filter string
+	g.applyFilter(filter, true)
+	g.Redraw()
 
 	for {
 		switch ev := g.screen.PollEvent().(type) {
+		case tickEvent:
 		case updateEvent:
-			g.interacting = false
-			update(false)
+			g.applyFilter(filter, true)
 		case *tcell.EventResize:
 			g.screen.Sync()
 		case *tcell.EventKey:
 			switch ev.Key() {
 			case tcell.KeyEscape:
-				g.filter = ""
-				g.filtering = false
+				g.applyFilter("", false)
 				return
 			case tcell.KeyEnter:
+				if filter == "" {
+					g.applyFilter("", false)
+				}
 				return
 			case tcell.KeyBackspace, tcell.KeyBackspace2:
-				if len(g.filter) > 0 {
-					g.filter = g.filter[:len(g.filter)-1]
+				if len(filter) > 0 {
+					filter = filter[:len(filter)-1]
 				}
 			case tcell.KeyRune:
-				g.filter += string(ev.Rune())
+				filter += string(ev.Rune())
 			}
-			update(false)
+			g.applyFilter(filter, true)
 		}
+		g.Redraw()
 	}
 }
 
-func (g *GUI) applyFilter() {
+func (g *GUI) applyFilter(filter string, filtering bool) {
+	g.dataMu.Lock()
+	defer g.dataMu.Unlock()
+	g.filtering = filtering
+	if !filtering {
+		filter = ""
+	}
 	var filtered = make([]feed.Item, 0, len(g.items))
-	filter := strings.ToLower(g.filter)
+	filter = strings.ToLower(filter)
 	for _, item := range g.items {
 		switch {
 		case filter == "":
@@ -227,8 +270,10 @@ func (g *GUI) applyFilter() {
 	before := len(g.filtered)
 	g.filtered = filtered
 	if before != len(filtered) {
+		g.selectByID(g.selectedID)
 		g.changeSelection(0, false)
 	}
+	g.filter = filter
 }
 
 func (g *GUI) openLink(url string) {
@@ -247,8 +292,13 @@ func (g *GUI) selectByID(id string) {
 			break
 		}
 	}
-	if to < 0 {
-		return
+	if to == -1 {
+		if len(g.filtered) > 0 {
+			g.selectedID = g.filtered[0].ID
+			to = 0
+		} else {
+			return
+		}
 	}
 	if to < g.scroll.offset {
 		g.scroll.offset = to
@@ -281,15 +331,20 @@ func (g *GUI) changeSelection(change int, force bool) {
 	} else if to >= g.scroll.offset+g.scroll.visible {
 		g.scroll.offset = to - g.scroll.visible + 1
 	}
-	g.scroll.selection = to
-	if g.scroll.selection < len(g.filtered) {
-		g.selectedID = g.filtered[g.scroll.selection].ID
+	if len(g.filtered) > 0 && to < len(g.filtered) {
+		g.selectedID = g.filtered[to].ID
 	} else {
 		g.selectedID = ""
 	}
+	g.scroll.selection = to
 }
 
 func (g *GUI) Update() {
+
+	g.updateMu.Lock()
+	defer g.updateMu.Unlock()
+	defer func() { g.lastUpdate = time.Now() }()
+	g.lastUpdate = time.Time{}
 
 	mgr := feed.New(g.config)
 	items, err := mgr.Read()
@@ -300,8 +355,6 @@ func (g *GUI) Update() {
 
 	g.dataMu.Lock()
 	g.items = items
-	g.applyFilter()
-	g.selectByID(g.selectedID)
 	g.dataMu.Unlock()
 
 	_ = g.screen.PostEvent(updateEvent{
@@ -418,7 +471,12 @@ func (g *GUI) Redraw() {
 			g.printf(0, h-1, tcell.StyleDefault.Foreground(tcell.ColorLimeGreen), "Filter: %s (esc to clear)", g.filter)
 		}
 	} else if g.config.ShowHelp {
-		g.printf(0, h-1, tcell.StyleDefault.Dim(true).Foreground(tcell.NewRGBColor(150, 150, 150)), "%s | updating every %s", helpText, g.config.PollInterval)
+		remaining := (g.config.PollInterval - time.Since(g.lastUpdate)).Round(time.Second)
+		when := "in " + remaining.String()
+		if remaining < time.Second {
+			when = "now"
+		}
+		g.printf(0, h-1, tcell.StyleDefault.Dim(true).Foreground(tcell.NewRGBColor(150, 150, 150)), "%s | updating %s", helpText, when)
 	}
 
 	g.screen.Show()
