@@ -27,6 +27,7 @@ type Item struct {
 	Title       string
 	Description string
 	Url         string
+	ImageUrl    string
 	Published   time.Time
 }
 
@@ -81,6 +82,9 @@ func (s *Source) GetItems() ([]Item, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.Name == "" {
+		s.Name = feed.Title
+	}
 	var items []Item
 	for _, item := range feed.Items {
 		if item.Link == "" {
@@ -93,14 +97,18 @@ func (s *Source) GetItems() ([]Item, error) {
 		hasher := sha256.New()
 		hasher.Write([]byte(item.Link))
 		hash := hex.EncodeToString(hasher.Sum(nil))
-		items = append(items, Item{
+		local := Item{
 			ID:          hash,
 			Source:      *s,
 			Title:       item.Title,
 			Description: getDescription(item),
 			Url:         item.Link,
 			Published:   date,
-		})
+		}
+		if item.Image != nil && item.Image.URL != "" {
+			local.ImageUrl = item.Image.URL
+		}
+		items = append(items, local)
 	}
 	return items, nil
 }

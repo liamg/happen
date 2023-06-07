@@ -35,6 +35,8 @@ type GUI struct {
 	selectedID string
 	lastUpdate time.Time
 	updateMu   sync.Mutex
+	errMu      sync.Mutex
+	lastErr    error
 }
 
 const (
@@ -80,7 +82,7 @@ func (g *GUI) Run(ctx context.Context) {
 			case <-ticker.C:
 				g.updateMu.Lock()
 				if time.Since(g.lastUpdate) < g.config.PollInterval {
-					g.screen.PostEvent(tickEvent{
+					_ = g.screen.PostEvent(tickEvent{
 						t: time.Now(),
 					})
 					g.updateMu.Unlock()
@@ -88,7 +90,7 @@ func (g *GUI) Run(ctx context.Context) {
 				}
 				g.updateMu.Unlock()
 				go g.Update()
-				g.screen.PostEvent(tickEvent{
+				_ = g.screen.PostEvent(tickEvent{
 					t: time.Now(),
 				})
 			case <-ctx.Done():
@@ -131,6 +133,14 @@ func (g *GUI) Run(ctx context.Context) {
 					if g.interacting {
 						if g.scroll.selection < len(g.filtered) {
 							g.openLink(g.filtered[g.scroll.selection].Url)
+						}
+					}
+				case 'i':
+					if g.interacting {
+						if g.scroll.selection < len(g.filtered) {
+							if url := g.filtered[g.scroll.selection].ImageUrl; url != "" {
+								g.openLink(url)
+							}
 						}
 					}
 				case '/':
@@ -277,7 +287,11 @@ func (g *GUI) applyFilter(filter string, filtering bool) {
 }
 
 func (g *GUI) openLink(url string) {
-	_ = open.Start(url)
+	if err := open.Start(url); err != nil {
+		g.errMu.Lock()
+		g.lastErr = err
+		g.errMu.Unlock()
+	}
 }
 
 func (g *GUI) selectByID(id string) {
@@ -348,10 +362,13 @@ func (g *GUI) Update() {
 
 	mgr := feed.New(g.config)
 	items, err := mgr.Read()
+	g.errMu.Lock()
+	defer g.errMu.Unlock()
 	if err != nil {
-		// TODO: handle error and print details
+		g.lastErr = err
 		return
 	}
+	g.lastErr = nil
 
 	g.dataMu.Lock()
 	g.items = items
@@ -413,7 +430,7 @@ func (g *GUI) Redraw() {
 
 		titleStyle := tcell.StyleDefault
 		descStyle := tcell.StyleDefault
-		iconStyle := tcell.StyleDefault
+		iconStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(1, 1, 1)).Background(tcell.NewRGBColor(254, 254, 254))
 		if c, ok := hexToColour(item.Source.Foreground); ok {
 			iconStyle = iconStyle.Foreground(c)
 		}
@@ -464,12 +481,16 @@ func (g *GUI) Redraw() {
 
 	}
 
+	g.errMu.Lock()
+	defer g.errMu.Unlock()
 	if g.filtering {
 		if g.filterEditing {
 			g.printf(0, h-1, tcell.StyleDefault, "Filter: %s█", g.filter)
 		} else {
 			g.printf(0, h-1, tcell.StyleDefault.Foreground(tcell.ColorLimeGreen), "Filter: %s (esc to clear)", g.filter)
 		}
+	} else if g.lastErr != nil {
+		g.printf(0, h-1, tcell.StyleDefault.Foreground(tcell.NewRGBColor(255, 30, 80)), "Error: %s", g.lastErr)
 	} else if g.config.ShowHelp {
 		remaining := (g.config.PollInterval - time.Since(g.lastUpdate)).Round(time.Second)
 		when := "in " + remaining.String()

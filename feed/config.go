@@ -56,36 +56,38 @@ var DefaultConfig = Config{
 	},
 }
 
-func LoadConfig() (*Config, error) {
+func LoadConfig(fromFile bool) (*Config, error) {
 
-	homedir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	configPath := filepath.Join(homedir, ".config", "happen.yaml")
-
-	if data, err := os.ReadFile(configPath); err == nil {
-		config := DefaultConfig
-		err := yaml.Unmarshal(data, &config)
+	if fromFile {
+		homedir, err := os.UserHomeDir()
 		if err != nil {
-			return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+			return nil, fmt.Errorf("failed to get home directory: %w", err)
 		}
-		config.Init()
-		return &config, nil
-	}
 
-	if err := os.MkdirAll(filepath.Dir(configPath), 0700); err != nil {
-		return nil, fmt.Errorf("failed to create config directory: %w", err)
-	}
+		configPath := filepath.Join(homedir, ".config", "happen.yaml")
 
-	data, err := yaml.Marshal(DefaultConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal default config: %w", err)
-	}
+		if data, err := os.ReadFile(configPath); err == nil {
+			config := DefaultConfig
+			err := yaml.Unmarshal(data, &config)
+			if err != nil {
+				return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+			}
+			config.Init()
+			return &config, nil
+		}
 
-	if err := os.WriteFile(configPath, data, 0600); err != nil {
-		return nil, fmt.Errorf("failed to write default config: %w", err)
+		if err := os.MkdirAll(filepath.Dir(configPath), 0700); err != nil {
+			return nil, fmt.Errorf("failed to create config directory: %w", err)
+		}
+
+		data, err := yaml.Marshal(DefaultConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal default config: %w", err)
+		}
+
+		if err := os.WriteFile(configPath, data, 0600); err != nil {
+			return nil, fmt.Errorf("failed to write default config: %w", err)
+		}
 	}
 
 	config := DefaultConfig

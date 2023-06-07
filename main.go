@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 
@@ -9,10 +10,13 @@ import (
 	"github.com/liamg/happen/gui"
 )
 
-// This program just prints "Hello, World!".  Press ESC to exit.
 func main() {
 
-	conf, err := feed.LoadConfig()
+	var ignoreConfig bool
+	flag.BoolVar(&ignoreConfig, "i", false, "Ignore config file and use defaults")
+	flag.Parse()
+
+	conf, err := feed.LoadConfig(!ignoreConfig)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		os.Exit(1)
