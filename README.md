@@ -1,6 +1,6 @@
 # happen
 
-A hacked together terminal-based RSS reader, created for my own use. Designed to tick away in a window and surface recent items of interest in a chat-like view.
+A hacked together terminal-based feed reader, created for my own use. Designed to tick away in a window and surface recent items of interest in a chat-like view.
 
 Configure desired feeds in the config file at `~/.config/happen.yaml` (will be created with default settings after running once.)
 
