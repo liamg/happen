@@ -43,7 +43,7 @@ subreddits: # list of subreddits to add to the feed
 sources: # list of generic feed sources - all parameters are optional except url
     - name: BBC
       url: https://feeds.bbci.co.uk/news/world/rss.xml
-      bg: '#930000' # badge backlground colour
+      bg: '#930000' # badge background colour
       fg: '#e4e6e9' # badge foreground colour
       maxAge: 4h # oldest items to display from the feed
     - name: Hacker News
