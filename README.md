@@ -6,6 +6,14 @@ Configure desired feeds in the config file at `~/.config/happen.yaml` (will be c
 
 ![screenshot](screenshot.png)
 
+## Installation
+
+Install with go:
+
+```bash
+go install github.com/liamg/happen@latest
+```
+
 ## Key Bindings
 
 | Key                     | Description |
