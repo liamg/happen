@@ -4,6 +4,8 @@ A hacked together terminal-based RSS reader, created for my own use. Designed to
 
 Configure desired feeds in the config file at `~/.config/happen.yaml` (will be created with default settings after running once.)
 
+![screenshot](screenshot.png)
+
 ## Key Bindings
 
 | Key                     | Description |
